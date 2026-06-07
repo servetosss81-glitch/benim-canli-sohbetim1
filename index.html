@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Özel Mesajlı Canlı Sohbet</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background-color: #f0f2f5; margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        .box { width: 100%; max-width: 400px; background: white; padding: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border-radius: 12px; text-align: center; }
+        input { width: 90%; padding: 12px; margin: 10px 0; border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; }
+        button { width: 95%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 1rem; font-weight: bold; }
+        
+        /* Ana Ekran Düzeni */
+        #main-container { width: 100%; max-width: 500px; height: 90vh; background: white; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border-radius: 12px; display: none; flex-direction: column; overflow: hidden; }
+        #header { background: #007bff; color: white; padding: 15px; text-align: center; font-size: 1.2rem; font-weight: bold; }
+        
+        /* Kullanıcı Listesi Ekranı */
+        #user-list-section { flex-grow: 1; padding: 20px; overflow-y: auto; }
+        .user-item { padding: 15px; background: #f8f9fa; margin-bottom: 10px; border-radius: 8px; cursor: pointer; font-weight: bold; border-left: 5px solid #28a745; transition: 0.2s; }
+        .user-item:hover { background: #e2e6ea; }
+
+        /* Özel Sohbet Ekranı (Başta Gizli) */
+        #chat-section { flex-grow: 1; display: none; flex-direction: column; height: 100%; }
+        #chat-header { background: #6c757d; color: white; padding: 10px 15px; font-weight: bold; display: flex; justify-content: space-between; align-items: center; }
+        #back-btn { background: #dc3545; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; }
+        #messages { list-style-type: none; margin: 0; padding: 20px; flex-grow: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; background: #f7f9fa; }
+        #messages li { padding: 10px 15px; border-radius: 8px; max-width: 70%; word-wrap: break-word; background: #e4e6eb; align-self: flex-start; }
+        #messages li.my-message { background: #007bff; color: white; align-self: flex-end; }
+        #form { display: flex; padding: 15px; background: #fff; border-top: 1px solid #ddd; }
+        #msg-input { flex-grow: 1; border: 1px solid #ccc; padding: 10px; border-radius: 20px; outline: none; }
+    </style>
+</head>
+<body>
+
+<div id="auth-box" class="box">
+    <h2 id="auth-title">Giriş Yap</h2>
+    <input type="text" id="username" placeholder="Kullanıcı Adı">
+    <input type="password" id="password" placeholder="Şifre">
+    <button id="auth-btn" onclick="handleAuth()">Giriş Yap</button>
+    <div id="switch-text" style="color: #007bff; cursor: pointer; margin-top: 15px;" onclick="toggleAuth()">Hesabın yok mu? Kayıt Ol</div>
+</div>
+
+<div id="main-container">
+    <div id="header">Sohbet App (<span id="user-display"></span>)</div>
+    
+    <div id="user-list-section">
+        <h3>Aktif Arkadaşlar (Sohbet için tıkla)</h3>
+        <div id="active-users"></div>
+    </div>
+
+    <div id="chat-section">
+        <div id="chat-header">
+            <span>Sohbet Edilen: <span id="chatting-with"></span></span>
+            <button id="back-btn" onclick="closeChat()">Kapat</button>
+        </div>
+        <ul id="messages"></ul>
+        <form id="form" action="">
+            <input id="msg-input" autocomplete="off" placeholder="Özel mesaj yazın..." />
+            <button type="submit" style="width: auto; border-radius: 20px; margin-left: 10px; padding: 10px 20px; background: #28a745;">Gönder</button>
+        </form>
+    </div>
+</div>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script>
+    // BURAYA KENDİ RENDER LİNKİNİ YAPIŞTIR:
+    const serverUrl = 'https://benim-canli-sohbetim.onrender.com'; 
+    
+    const socket = io(serverUrl);
+    let isLoginMode = true;
+    let currentUsername = "";
+    let selectedUser = ""; 
+    const privateMessages = {}; // Geçici mesaj geçmişi hafızası
+
+    function toggleAuth() {
+        isLoginMode = !isLoginMode;
+        document.getElementById('auth-title').innerText = isLoginMode ? "Giriş Yap" : "Kayıt Ol";
+        document.getElementById('auth-btn').innerText = isLoginMode ? "Giriş Yap" : "Kayıt Ol";
+    }
+
+    async function handleAuth() {
+        const username = document.getElementById('username').value.trim();
+        const password = document.getElementById('password').value;
+        const endpoint = isLoginMode ? '/login' : '/register';
+
+        if (!username || !password) { alert("Alanları doldurun!"); return; }
+
+        try {
+            const response = await fetch(serverUrl + endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+            const data = await response.json();
+            alert(data.message);
+
+            if (data.success && isLoginMode) {
+                currentUsername = username;
+                document.getElementById('auth-box').style.display = 'none';
+                document.getElementById('main-container').style.display = 'flex';
+                document.getElementById('user-display').innerText = username;
+                
+                // Sunucuya online olduğumuzu bildiriyoruz
+                socket.emit('user online', username);
+            } else if (data.success && !isLoginMode) {
+                toggleAuth();
+            }
+        } catch (error) { alert("Sunucu hatası!"); }
+    }
+
+    // Aktif Kullanıcı Listesini Ekrana Basma
+    socket.on('update user list', (userList) => {
+        const container = document.getElementById('active-users');
+        container.innerHTML = "";
+        
+        userList.forEach(user => {
+            // Kendimizi listede göstermiyoruz
+            if (user !== currentUsername) {
+                const div = document.createElement('div');
+                div.className = "user-item";
+                div.innerText = user + " 🟢";
+                div.onclick = () => openChat(user);
+                container.appendChild(div);
+            }
+        });
+    });
+
+    // Özel Sohbet Penceresini Açma
+    function openChat(targetUser) {
+        selectedUser = targetUser;
+        document.getElementById('chatting-with').innerText = targetUser;
+        document.getElementById('user-list-section').style.display = 'none';
+        document.getElementById('chat-section').style.display = 'flex';
+        renderMessages();
+    }
+
+    // Sohbeti Kapatıp Listeye Dönme
+    function closeChat() {
+        selectedUser = "";
+        document.getElementById('chat-section').style.display = 'none';
+        document.getElementById('user-list-section').style.display = 'flex';
+    }
+
+    // Mesaj Gönderme Butonu
+    document.getElementById('form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const msgInput = document.getElementById('msg-input');
+        if (msgInput.value.trim() && selectedUser) {
+            socket.emit('private message', {
+                to: selectedUser,
+                from: currentUsername,
+                text: msgInput.value.trim()
+            });
+            msgInput.value = '';
+        }
+    });
+
+    // Özel Mesaj Geldiğinde
+    socket.on('receive private message', (msg) => {
+        // Sohbet ettiğimiz anahtarı bul (Kiminle konuşuyorsak o isim altında kaydet)
+        const chatPartner = msg.from === currentUsername ? msg.to : msg.from;
+        
+        if (!privateMessages[chatPartner]) privateMessages[chatPartner] = [];
+        privateMessages[chatPartner].push(msg);
+
+        // Eğer şu an o kişiyle sohbet ekranımız açıksa mesajı anında ekrana bas
+        if (selectedUser === chatPartner) {
+            renderMessages();
+        }
+    });
+
+    // Mesajları Ekranda Listeleme
+    function renderMessages() {
+        const messagesUl = document.getElementById('messages');
+        messagesUl.innerHTML = "";
+        
+        const chatList = privateMessages[selectedUser] || [];
+        chatList.forEach(msg => {
+            const li = document.createElement('li');
+            li.textContent = msg.text;
+            if (msg.from === currentUsername) {
+                li.classList.add('my-message');
+            }
+            messagesUl.appendChild(li);
+        });
+        messagesUl.scrollTop = messagesUl.scrollHeight;
+    }
+</script>
+</body>
+</html> 
